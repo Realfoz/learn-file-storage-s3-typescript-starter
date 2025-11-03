@@ -1,53 +1,50 @@
 import { getBearerToken, validateJWT } from "../auth";
 import { respondWithJSON } from "./json";
-import { getVideo } from "../db/videos";
+import { getVideo, updateVideo } from "../db/videos";
 import type { ApiConfig } from "../config";
 import type { BunRequest } from "bun";
-import { BadRequestError, NotFoundError } from "./errors";
+import { BadRequestError, NotFoundError, UserForbiddenError } from "./errors";
+import path from "path";
 
-type Thumbnail = {
-  data: ArrayBuffer;
-  mediaType: string;
-};
-
-const videoThumbnails: Map<string, Thumbnail> = new Map();
-
-export async function handlerGetThumbnail(cfg: ApiConfig, req: BunRequest) {
-  const { videoId } = req.params as { videoId?: string };
-  if (!videoId) {
-    throw new BadRequestError("Invalid video ID");
-  }
-
-  const video = getVideo(cfg.db, videoId);
-  if (!video) {
-    throw new NotFoundError("Couldn't find video");
-  }
-
-  const thumbnail = videoThumbnails.get(videoId);
-  if (!thumbnail) {
-    throw new NotFoundError("Thumbnail not found");
-  }
-
-  return new Response(thumbnail.data, {
-    headers: {
-      "Content-Type": thumbnail.mediaType,
-      "Cache-Control": "no-store",
-    },
-  });
+const fileTypeRecord: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp"
 }
 
+function extensionFromMime(mime: string): string {
+  const ext = fileTypeRecord[mime]
+   if (!ext) throw new BadRequestError("Unsupported image type");
+  return ext;
+}
+
+
 export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
-  const { videoId } = req.params as { videoId?: string };
-  if (!videoId) {
-    throw new BadRequestError("Invalid video ID");
-  }
+    const { videoId } = req.params as { videoId?: string };
+    if (!videoId) {
+      throw new BadRequestError("Invalid video ID");
+    }
+    const token = getBearerToken(req.headers);
+    const userID = validateJWT(token, cfg.jwtSecret);
+    console.log("uploading thumbnail for video", videoId, "by user", userID);
+    const formData = await req.formData(); // gets the form data and parses it
+    const file = formData.get("thumbnail"); //gets just the thumbnail from the form data
+    if (!file || !(file instanceof File)) {throw new BadRequestError("Invalid File")}
+    
+    const MAX_UPLOAD_SIZE = 10 << 20; //bitwise magical bullshit. tl:dr its 10MB
+    if (file.size > MAX_UPLOAD_SIZE) {throw new BadRequestError("File size to large. Files are limited to 10MB")}
+   
+    const fileType = extensionFromMime(file.type)
+    const fileByteArray = await file.arrayBuffer() //creates a byte array of the image
+    const fileURL = path.join(cfg.assetsRoot,`${videoId}.${fileType}`)
+   
+    await Bun.write(fileURL,fileByteArray)
+    
+    let videoMetaData = getVideo(cfg.db, videoId) //gets the videos metadata from the db and video id
+    if (userID !== videoMetaData?.userID) {throw new UserForbiddenError("Invalid userId for this request")}
 
-  const token = getBearerToken(req.headers);
-  const userID = validateJWT(token, cfg.jwtSecret);
+    videoMetaData.thumbnailURL = `http://localhost:${cfg.port}/assets/${videoId}.${fileType}`
+    updateVideo(cfg.db, videoMetaData)
 
-  console.log("uploading thumbnail for video", videoId, "by user", userID);
-
-  // TODO: implement the upload here
-
-  return respondWithJSON(200, null);
+  return respondWithJSON(200, videoMetaData);
 }
