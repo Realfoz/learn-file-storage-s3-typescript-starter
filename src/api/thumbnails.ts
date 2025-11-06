@@ -5,6 +5,7 @@ import type { ApiConfig } from "../config";
 import type { BunRequest } from "bun";
 import { BadRequestError, NotFoundError, UserForbiddenError } from "./errors";
 import path from "path";
+import { randomBytes } from "crypto";
 
 const fileTypeRecord: Record<string, string> = {
   "image/png": "png",
@@ -36,14 +37,15 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
    
     const fileType = extensionFromMime(file.type)
     const fileByteArray = await file.arrayBuffer() //creates a byte array of the image
-    const fileURL = path.join(cfg.assetsRoot,`${videoId}.${fileType}`)
+    const randomString = randomBytes(32).toString("base64url") //creates a random 32 byte buffer and stringifies it to be the file path
+    const fileURL = path.join(cfg.assetsRoot,`${randomString}.${fileType}`)
    
     await Bun.write(fileURL,fileByteArray)
     
     let videoMetaData = getVideo(cfg.db, videoId) //gets the videos metadata from the db and video id
     if (userID !== videoMetaData?.userID) {throw new UserForbiddenError("Invalid userId for this request")}
 
-    videoMetaData.thumbnailURL = `http://localhost:${cfg.port}/assets/${videoId}.${fileType}`
+    videoMetaData.thumbnailURL = `http://localhost:${cfg.port}/assets/${randomString}.${fileType}`
     updateVideo(cfg.db, videoMetaData)
 
   return respondWithJSON(200, videoMetaData);
