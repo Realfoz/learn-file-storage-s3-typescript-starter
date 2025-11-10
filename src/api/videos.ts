@@ -6,6 +6,7 @@ import { getBearerToken, validateJWT } from "../auth";
 import { getVideo, updateVideo } from "../db/videos";
 import { randomBytes } from "crypto";
 import path from "path";
+import fs from 'fs';
 
 export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
    const { videoId } = req.params as { videoId?: string }; //checkedd routing, this is the correct path
@@ -56,4 +57,12 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
     await Bun.file(tempFile).delete(); //removes local file once upload is done
 
   return respondWithJSON(200, videoMetaData );
+}
+
+
+export function getVideoAspectRatio(filepath: string) {
+  const path = fs.statSync(filepath)
+  if (!path || !path.isFile()) {
+    throw new BadRequestError("Invalid File Path")
+  }
 }
