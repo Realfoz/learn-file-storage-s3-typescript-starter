@@ -41,9 +41,11 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
     }
     const fileByteArray = await file.arrayBuffer() //creates a byte array of the video
     const randomString = randomBytes(32).toString("base64url") //creates a random 32 byte buffer and stringifies it to be the file path
-    const key = `${randomString}.${fileType}`
-    const tempFile = path.join(cfg.assetsRoot, key)
+    const tempKey = `${randomString}.${fileType}`
+    const tempFile = path.join(cfg.assetsRoot, tempKey)
     await Bun.write(tempFile,fileByteArray) //adds local save copy
+    const aspectRatio = await getVideoAspectRatio(tempFile)
+    const key = `${aspectRatio}/${tempKey}`
     
     const s3File = cfg.s3Client.file(key) 
     await s3File.write(Bun.file(tempFile),{type: mimeType})
@@ -60,9 +62,47 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
 }
 
 
-export function getVideoAspectRatio(filepath: string) {
+export async function getVideoAspectRatio(filepath: string) {
   const path = fs.statSync(filepath)
   if (!path || !path.isFile()) {
     throw new BadRequestError("Invalid File Path")
   }
+  let process = Bun.spawn([ //runs this in the terminal and we can pipe stuff in and out
+    "ffprobe",
+    "-v",
+    "error",
+    "-select_streams",
+    "v:0",
+    "-show_entries",
+    "stream=width,height",
+    "-of",
+    "json",
+    filepath
+  ],{
+    stdout: "pipe", //output
+    stderr: "pipe" //errors
+  })
+  const output = await new Response(process.stdout).text(); //saves the output stringified json from the process
+  const errors = await new Response(process.stderr).text();
+  await process.exited //waits for the process to finish so we can check the code
+
+  //debugging
+  console.log(errors)
+  console.log(output)
+  console.log(`exit code: ${process.exitCode}`)
+
+  if (errors||!output|| process.exitCode !== 0) {throw new BadRequestError("Invalid file")} //err on any err msg, no output or a failed exit code
+
+  const data = JSON.parse(output) //converts the stringified version into a json
+  const width = data.streams[0].width
+  const height = data.streams[0].height
+  const aspectRatio = width / height 
+  
+  if (aspectRatio > 1.1) {
+    return "landscape"
+  } else if (aspectRatio < 0.9) {
+    return "portrait"
+  } else {
+    return "other"
+  }  
 }
