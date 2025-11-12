@@ -1,6 +1,6 @@
 import { respondWithJSON } from "./json";
 import { type ApiConfig } from "../config";
-import { s3, S3Client, type BunRequest } from "bun";
+import { file, s3, S3Client, type BunRequest } from "bun";
 import { BadRequestError, UserForbiddenError } from "./errors";
 import { getBearerToken, validateJWT } from "../auth";
 import { getVideo, updateVideo } from "../db/videos";
@@ -44,11 +44,14 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
     const tempKey = `${randomString}.${fileType}`
     const tempFile = path.join(cfg.assetsRoot, tempKey)
     await Bun.write(tempFile,fileByteArray) //adds local save copy
-    const aspectRatio = await getVideoAspectRatio(tempFile)
+
+    const fastStart = await processVideoForFastStart(tempFile);
+
+    const aspectRatio = await getVideoAspectRatio(fastStart) //gets aspect ratio of fast start version
     const key = `${aspectRatio}/${tempKey}`
     
     const s3File = cfg.s3Client.file(key) 
-    await s3File.write(Bun.file(tempFile),{type: mimeType})
+    await s3File.write(Bun.file(fastStart),{type: mimeType}) //uploads the fgast start version but keeps the old name
 
     videoMetaData.videoURL = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${key}`
     updateVideo(cfg.db, videoMetaData)
@@ -57,6 +60,7 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
      console.log(check?.videoURL);
 
     await Bun.file(tempFile).delete(); //removes local file once upload is done
+    await Bun.file(fastStart).delete(); //removes fst start local file
 
   return respondWithJSON(200, videoMetaData );
 }
@@ -86,11 +90,6 @@ export async function getVideoAspectRatio(filepath: string) {
   const errors = await new Response(process.stderr).text();
   await process.exited //waits for the process to finish so we can check the code
 
-  //debugging
-  console.log(errors)
-  console.log(output)
-  console.log(`exit code: ${process.exitCode}`)
-
   if (errors||!output|| process.exitCode !== 0) {throw new BadRequestError("Invalid file")} //err on any err msg, no output or a failed exit code
 
   const data = JSON.parse(output) //converts the stringified version into a json
@@ -105,4 +104,36 @@ export async function getVideoAspectRatio(filepath: string) {
   } else {
     return "other"
   }  
+}
+
+export async function processVideoForFastStart(filepath: string) {
+    const path = fs.statSync(filepath)
+  if (!path || !path.isFile()) {
+    throw new BadRequestError("Invalid File Path")
+  }
+  const newFilePath = `${filepath}.processed` 
+  let process = Bun.spawn([
+    "ffmpeg",
+    "-i",
+    filepath,
+    "-movflags",
+    "faststart",
+    "-map_metadata",
+    "0",
+    "-codec",
+    "copy",
+    "-f",
+    "mp4",
+    newFilePath
+  ])
+ 
+await process.exited;
+if (process.exitCode !== 0) {
+  throw new BadRequestError("ffmpeg failed");
+}
+const out = await fs.promises.stat(newFilePath).catch(() => null);
+if (!out || !out.isFile() || out.size <= 0) {
+  throw new BadRequestError("Processed file missing or empty");
+}
+return newFilePath;
 }
