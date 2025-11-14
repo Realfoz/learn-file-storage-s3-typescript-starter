@@ -14,7 +14,7 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
         throw new BadRequestError("Invalid video ID");
       }
 
-    console.log("params:", req.params) //debugging
+ 
 
     const token = getBearerToken(req.headers);
         const userID = validateJWT(token, cfg.jwtSecret);
@@ -137,3 +137,4 @@ if (!out || !out.isFile() || out.size <= 0) {
 }
 return newFilePath;
 }
+
