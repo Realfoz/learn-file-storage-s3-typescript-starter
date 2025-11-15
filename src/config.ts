@@ -14,6 +14,7 @@ export type ApiConfig = {
   s3CfDistribution: string;
   port: string;
   s3Client: S3Client;
+  signedUrlTTLSeconds: number;
 };
 
 const pathToDB = envOrThrow("DB_PATH");
@@ -44,7 +45,8 @@ export const cfg: ApiConfig = {
   s3Region: s3Region,
   s3CfDistribution: s3CfDistribution,
   port: port,
-  s3Client: s3Client as S3ClientType
+  s3Client: s3Client as S3ClientType,
+  signedUrlTTLSeconds: 300 
 };
 
 function envOrThrow(key: string) {

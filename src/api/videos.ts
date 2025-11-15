@@ -3,18 +3,17 @@ import { type ApiConfig } from "../config";
 import { file, s3, S3Client, type BunRequest } from "bun";
 import { BadRequestError, UserForbiddenError } from "./errors";
 import { getBearerToken, validateJWT } from "../auth";
-import { getVideo, updateVideo } from "../db/videos";
+import { getVideo, updateVideo, type Video } from "../db/videos";
 import { randomBytes } from "crypto";
 import path from "path";
 import fs from 'fs';
+import { type } from "os";
 
 export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
-   const { videoId } = req.params as { videoId?: string }; //checkedd routing, this is the correct path
+   const { videoId } = req.params as { videoId?: string }; //checked routing, this is the correct path
       if (!videoId) {
         throw new BadRequestError("Invalid video ID");
       }
-
- 
 
     const token = getBearerToken(req.headers);
         const userID = validateJWT(token, cfg.jwtSecret);
@@ -51,20 +50,17 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
     const key = `${aspectRatio}/${tempKey}`
     
     const s3File = cfg.s3Client.file(key) 
-    await s3File.write(Bun.file(fastStart),{type: mimeType}) //uploads the fgast start version but keeps the old name
+    await s3File.write(Bun.file(fastStart),{type: mimeType}) //uploads the fast start version but keeps the old name
 
-    videoMetaData.videoURL = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${key}`
+    videoMetaData.videoURL = key
     updateVideo(cfg.db, videoMetaData)
-
-     const check = getVideo(cfg.db, videoId); //debugging
-     console.log(check?.videoURL);
+    const presignedVideo = await dbVideoToSignedVideo(cfg, videoMetaData)
 
     await Bun.file(tempFile).delete(); //removes local file once upload is done
     await Bun.file(fastStart).delete(); //removes fst start local file
 
-  return respondWithJSON(200, videoMetaData );
+  return respondWithJSON(200, presignedVideo );
 }
-
 
 export async function getVideoAspectRatio(filepath: string) {
   const path = fs.statSync(filepath)
@@ -138,3 +134,18 @@ if (!out || !out.isFile() || out.size <= 0) {
 return newFilePath;
 }
 
+async function generatePresignedURL(cfg:ApiConfig, key:string, expireTime:number) {
+  return await cfg.s3Client.presign(key, {
+  expiresIn: expireTime,
+  method: "GET",
+  });
+}
+
+ export async function dbVideoToSignedVideo(cfg: ApiConfig, video: Video){
+  let key = video.videoURL
+  if (!key || typeof key !== "string"|| key.trim() === "") {
+    return video
+  }
+  const presignedURL = await generatePresignedURL(cfg,key,cfg.signedUrlTTLSeconds)
+  return {...video, videoURL: presignedURL}
+}
