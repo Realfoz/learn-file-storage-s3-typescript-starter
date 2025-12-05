@@ -52,14 +52,14 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
     const s3File = cfg.s3Client.file(key) 
     await s3File.write(Bun.file(fastStart),{type: mimeType}) //uploads the fast start version but keeps the old name
 
-    videoMetaData.videoURL = key
+    videoMetaData.videoURL = `${cfg.s3CfDistribution}/${key}`
     updateVideo(cfg.db, videoMetaData)
-    const presignedVideo = await dbVideoToSignedVideo(cfg, videoMetaData)
+    
 
     await Bun.file(tempFile).delete(); //removes local file once upload is done
     await Bun.file(fastStart).delete(); //removes fst start local file
 
-  return respondWithJSON(200, presignedVideo );
+  return respondWithJSON(200,videoMetaData);
 }
 
 export async function getVideoAspectRatio(filepath: string) {
@@ -134,18 +134,3 @@ if (!out || !out.isFile() || out.size <= 0) {
 return newFilePath;
 }
 
-async function generatePresignedURL(cfg:ApiConfig, key:string, expireTime:number) {
-  return await cfg.s3Client.presign(key, {
-  expiresIn: expireTime,
-  method: "GET",
-  });
-}
-
- export async function dbVideoToSignedVideo(cfg: ApiConfig, video: Video){
-  let key = video.videoURL
-  if (!key || typeof key !== "string"|| key.trim() === "") {
-    return video
-  }
-  const presignedURL = await generatePresignedURL(cfg,key,cfg.signedUrlTTLSeconds)
-  return {...video, videoURL: presignedURL}
-}
